@@ -62,7 +62,7 @@ class xssFinderTests(unittest.TestCase):
                           'URL': 'https://example.com',
                           'Injection Point': "End of URL"})
         # Non-Exploitable:
-        self.assertEqual(xss.getXSSInfo(b"<html><a href='%s'>Test</a></html>" % xss.fullPayload.replace(b"'", b"%27"),
+        self.assertEqual(xss.getXSSInfo(b"<html><a href='OtherStuff%s'>Test</a></html>" % xss.fullPayload.replace(b"'", b"%27"),
                                         "https://example.com",
                                         "End of URL"),
                          None)
@@ -76,7 +76,7 @@ class xssFinderTests(unittest.TestCase):
                           'URL': 'https://example.com',
                           'Injection Point': "End of URL"})
         # Non-Exploitable:
-        self.assertEqual(xss.getXSSInfo(b"<html><a href=\"%s\">Test</a></html>" % xss.fullPayload.replace(b"'", b"%27").replace(b"\"", b"%22"),
+        self.assertEqual(xss.getXSSInfo(b"<html><a href=\"OtherStuff%s\">Test</a></html>" % xss.fullPayload.replace(b"'", b"%27").replace(b"\"", b"%22"),
                                         "https://example.com",
                                         "End of URL"),
                         None)
@@ -90,7 +90,7 @@ class xssFinderTests(unittest.TestCase):
                           'URL': 'https://example.com',
                           'Injection Point': "End of URL"})
         # Non-Exploitable
-        self.assertEqual(xss.getXSSInfo(b"<html><a href=%s>Test</a></html>" % xss.fullPayload.replace(b"<", b"%3C").replace(b">", b"%3E"),
+        self.assertEqual(xss.getXSSInfo(b"<html><a href=OtherStuff%s>Test</a></html>" % xss.fullPayload.replace(b"<", b"%3C").replace(b">", b"%3E"),
                                         "https://example.com",
                                         "End of URL"),
                          None)
@@ -105,6 +105,20 @@ class xssFinderTests(unittest.TestCase):
                           'Injection Point': "End of URL"})
         # Non-Exploitable
         self.assertEqual(xss.getXSSInfo(b"<html><b>%s</b></html>" % xss.fullPayload.replace(b"<", b"%3C").replace(b">", b"%3E").replace(b"/", b"%2F"),
+                                        "https://example.com",
+                                        "End of URL"),
+                         None)
+        # Eighth type of exploit: <a href=PAYLOAD>Test</a>
+        # Exploitable: 
+        self.assertEqual(xss.getXSSInfo(b"<html><a href=%s>Test</a></html>" % xss.fullPayload.replace(b"<", b"%3C").replace(b">", b"%3E"),
+                                        "https://example.com",
+                                        "End of URL"),
+                         {'Line': xss.fullPayload.replace(b"<", b"%3C").replace(b">", b"%3E").decode('utf-8'),
+                          'Exploit': "Javascript:alert(0)",
+                          'URL': 'https://example.com',
+                          'Injection Point': "End of URL"})
+        # Non-Exploitable:
+        self.assertEqual(xss.getXSSInfo(b"<html><a href=OtherStuff%s>Test</a></html>" % xss.fullPayload.replace(b"<", b"%3C").replace(b">", b"%3E"),
                                         "https://example.com",
                                         "End of URL"),
                          None)

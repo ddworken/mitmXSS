@@ -138,7 +138,7 @@ def getXSSInfo(body, requestURL, injectionPoint):
             path = tuple[1]
             if tree.text and str in tree.text:
                 found.append(path+"/"+tree.tag)
-            else:                              
+            else:
                 newLOTPT.extend([(child, path+"/"+tree.tag) for child in tree.getchildren()])
         return pathsToText(newLOTPT, str, found)
     def inScript(text, index, body):
@@ -181,6 +181,18 @@ def getXSSInfo(body, requestURL, injectionPoint):
                     return inQuote
                 count += 1
         raise Exception("Failed in inside quote")
+    def injectJavascriptHandler(lot):
+        """ Whether you can inject a Javascript:alert(0) as a link
+            [ListOf HTMLTree] -> Boolean """
+        newLot = []
+        if not lot:
+            return False
+        for tree in lot:
+            if tree.attrib and 'href' in tree.attrib.keys() and tree.attrib['href'].startswith(frontWall.decode('utf-8')):
+                return True
+            else:
+                newLot.extend([child for child in tree])
+        return injectJavascriptHandler(newLot)
     # Only convert the body to bytes if needed
     if isinstance(body, str):
         body = bytes(body, 'utf-8')
@@ -239,7 +251,9 @@ def getXSSInfo(body, requestURL, injectionPoint):
         elif inHTML and not inScript and injectOA and injectCA and injectSlash:  # e.g. <html>PAYLOAD</html>
             respDict['Exploit'] = '<script>alert(0)</script>'
             return respDict
-        # TODO: Injection of javascript:alert(0)
+        elif injectJavascriptHandler([fromstring(body)]):  # e.g. <html><a href=PAYLOAD>Test</a>
+            respDict['Exploit'] = 'Javascript:alert(0)'
+            return respDict
         # TODO: Injection of JS executing attributes (e.g. onmouseover)
         else:
             return None
