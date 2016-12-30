@@ -125,7 +125,8 @@ def getXSSInfo(body, requestURL, injectionPoint):
                     return inQuote
                 count += 1
         raise Exception("Failed in inside quote")
-    body = bytes(body, 'utf-8')
+    if isinstance(body, str):
+        body = bytes(body, 'utf-8')
     regex = re.compile(b"""%s.{24,72}?%s""" % (frontWall, backWall))
     matches = regex.findall(body)
     matchesWithoutWalls = [match[len(frontWall):-1 * len(backWall)] for match in regex.findall(body)]
