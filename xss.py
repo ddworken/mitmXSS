@@ -1,16 +1,17 @@
-from mitmproxy import ctx
-from socket import gaierror, gethostbyname
-from urllib.parse import urlparse
-import lxml
-from lxml.html import fromstring, tostring
-import requests
-import re
+from mitmproxy import ctx  # Used for logging information to mitmproxy
+from socket import gaierror, gethostbyname  # Used to check whether a domain name resolves
+from urllib.parse import urlparse  # Used to modify paths and queries for URLs
+from lxml.etree import ParserError, XMLSyntaxError  # Catch errors caused by parsing trees
+from lxml.html import fromstring, tostring  # Used when processing HTML as a tree
+import requests  # Used to send additional requests when looking for XSSs
+import re  # Used for pulling out the payload
 
+# The actual payload is put between a frontWall and a backWall to make it easy
+# to locate the payload with regular expressions
 frontWall = b"1029zxc"
 backWall  = b"3847asd"
 payload   = b"""s'd"ao<ac>so[sb]po(pc)se;sl/bsl\\"""
 fullPayload = frontWall + payload + backWall
-
 
 def findUnclaimedURLs(body, requestUrl):
     try:
@@ -21,14 +22,11 @@ def findUnclaimedURLs(body, requestUrl):
             domain = parser.netloc
             try:
                 gethostbyname(domain)
-                resolved = True
             except gaierror:
-                resolved = False
-            if resolved == False:
                 ctx.log.error("XSS found in %s due to unclaimed URL \"%s\" in script tag." % (requestUrl, url))
-    except lxml.etree.XMLSyntaxError:
+    except XMLSyntaxError:
         pass
-    except lxml.etree.ParserError:
+    except ParserError:
         pass
                 
 def testEndOfURLInjection(requestURL):
@@ -36,7 +34,7 @@ def testEndOfURLInjection(requestURL):
     path = parsedURL.path
     if path[-1] != "/":  # ensure the path ends in a /
         path += "/"
-    path += fullPayload.decode('utf-8')
+    path += fullPayload.decode('utf-8')  # the path must be a string while the payload is bytes
     url = parsedURL._replace(path=path).geturl()
     body = requests.get(url).text.lower() 
     xssInfo = getXSSInfo(body, url, "End of URL")
@@ -55,6 +53,7 @@ def testUserAgentInjection(requestURL):
 def testQueryInjection(requestURL):
     parsedURL = urlparse(requestURL)
     queryString = parsedURL.query
+    # queries is a list of parameters where each parameter is set to the payload
     queries = [query.split("=")[0]+"="+fullPayload.decode('utf-8') for query in queryString.split("&")]
     newQueryString = "&".join(queries)
     newURL = parsedURL._replace(query=newQueryString).geturl()
@@ -72,6 +71,8 @@ def ctxLog(xssInfo):
     ctx.log.error("Line: %s" % xssInfo['Line'])
 
 def getXSSInfo(body, requestURL, injectionPoint):
+    # All of the injection tests work by checking whether the character (with
+    # the fences on the side) appear in the body of the HTML
     def injectOA(match):
         return b"ao<ac" in match
     def injectCA(match):
@@ -85,6 +86,7 @@ def getXSSInfo(body, requestURL, injectionPoint):
     def injectSemi(match):
         return b"se;sl" in match
     # BFS based search
+    # A list of paths to a given str in the HTML tree
     def pathsToText(listOfTreePathTuples, str, found=[]):
         newLOTPT = []
         if not listOfTreePathTuples:
@@ -125,12 +127,14 @@ def getXSSInfo(body, requestURL, injectionPoint):
                     return inQuote
                 count += 1
         raise Exception("Failed in inside quote")
+    # Only convert the body to bytes if needed
     if isinstance(body, str):
         body = bytes(body, 'utf-8')
+    # Regex for between 24 and 72 (aka 24*3) characters encapsulated by the walls
     regex = re.compile(b"""%s.{24,72}?%s""" % (frontWall, backWall))
     matches = regex.findall(body)
-    matchesWithoutWalls = [match[len(frontWall):-1 * len(backWall)] for match in regex.findall(body)]
     for index,match in enumerate(matches):
+        # Where the string is injected into the HTML
         inScript = inScript(match, index, body)
         inHTML   =   inHTML(match, index, body)
         inTag    = not inScript and not inHTML
@@ -143,9 +147,11 @@ def getXSSInfo(body, requestURL, injectionPoint):
         injectDoubleQuotes = injectDoubleQuotes(match)  # double quotes
         injectSlash = injectSlash(match)  # forward slashes
         injectSemi  = injectSemi(match)  # semicolons
+        # The initial response dict: 
         respDict = {'Line': match.decode('utf-8'),
                     'URL': requestURL,
                     'Injection Point': injectionPoint}
+        # Debugging: 
         #print("====================================")
         #print("In Script: %s" % inScript)
         #print("In HTML: %s" % inHTML)
@@ -167,16 +173,16 @@ def getXSSInfo(body, requestURL, injectionPoint):
         elif inScript and inDoubleQuotes and injectDoubleQuotes and injectSemi:  # e.g. <script>t="PAYLOAD";</script>
             respDict['Exploit'] = '";alert(0);g="'
             return respDict
-        elif inTag and inSingleQuotes and injectSingleQuotes and injectOA and injectCA and injectSlash:  # <a href='PAYLOAD'>Test</a>
+        elif inTag and inSingleQuotes and injectSingleQuotes and injectOA and injectCA and injectSlash:  # e.g. <a href='PAYLOAD'>Test</a>
             respDict['Exploit'] = "'><script>alert(0)</script>"
             return respDict
-        elif inTag and inDoubleQuotes and injectDoubleQuotes and injectOA and injectCA and injectSlash:  # <a href="PAYLOAD">Test</a>
+        elif inTag and inDoubleQuotes and injectDoubleQuotes and injectOA and injectCA and injectSlash:  # e.g. <a href="PAYLOAD">Test</a>
             respDict['Exploit'] = '"><script>alert(0)</script>'
             return respDict
-        elif inTag and not inDoubleQuotes and not inSingleQuotes and injectOA and injectCA and injectSlash:  # <a href=PAYLOAD>Test</a>
+        elif inTag and not inDoubleQuotes and not inSingleQuotes and injectOA and injectCA and injectSlash:  # e.g. <a href=PAYLOAD>Test</a>
             respDict['Exploit'] = '><script>alert(0)</script>'
             return respDict
-        elif inHTML and not inScript and injectOA and injectCA and injectSlash:  # <html>PAYLOAD</html>
+        elif inHTML and not inScript and injectOA and injectCA and injectSlash:  # e.g. <html>PAYLOAD</html>
             respDict['Exploit'] = '<script>alert(0)</script>'
             return respDict
         # TODO: Injection of javascript:alert(0)
