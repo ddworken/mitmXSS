@@ -13,7 +13,16 @@ backWall  = b"3847asd"
 payload   = b"""s'd"ao<ac>so[sb]po(pc)se;sl/bsl\\"""
 fullPayload = frontWall + payload + backWall
 
+# A URL is a string starting with http:// or https:// that points to a website
+# A XSSDict is a dictionary with the following keys value pairs:
+#   - 'URL' -> URL
+#   - 'Injection Point' -> String
+#   - 'Exploit' -> String
+#   - 'Line' -> String
+
 def findUnclaimedURLs(body, requestUrl):
+    """ Look for unclaimed URLs in script tags and log them if found
+        String URL -> None """
     try:
         tree = fromstring(body)
         scriptURLs = tree.xpath('//script/@src')
@@ -30,6 +39,9 @@ def findUnclaimedURLs(body, requestUrl):
         pass
                 
 def testEndOfURLInjection(requestURL):
+    """ Test the given URL for XSS via injection onto the end of the URL and
+        log the XSS if found
+        URL -> None """
     parsedURL = urlparse(requestURL)
     path = parsedURL.path
     if path[-1] != "/":  # ensure the path ends in a /
@@ -41,16 +53,25 @@ def testEndOfURLInjection(requestURL):
     ctxLog(xssInfo)
 
 def testRefererInjection(requestURL):
+    """ Test the given URL for XSS via injection into the referer and 
+        log the XSS if found 
+        URL -> None """
     body = requests.get(requestURL, headers={'referer': fullPayload}).text.lower()
     xssInfo = getXSSInfo(body, requestURL, "Referer")
     ctxLog(xssInfo)
 
 def testUserAgentInjection(requestURL):
+    """ Test the given URL for XSS via injection into the user agent and
+        log the XSS if found 
+        URL -> None """
     body = requests.get(requestURL, headers={'User-Agent': fullPayload}).text.lower()
     xssInfo = getXSSInfo(body, requestURL, "User Agent")
     ctxLog(xssInfo)
     
 def testQueryInjection(requestURL):
+    """ Test the given URL for XSS via injection into URL queries and
+        log the XSS if found
+        URL -> None """
     parsedURL = urlparse(requestURL)
     queryString = parsedURL.query
     # queries is a list of parameters where each parameter is set to the payload
@@ -62,6 +83,9 @@ def testQueryInjection(requestURL):
     ctxLog(xssInfo)
 
 def ctxLog(xssInfo):
+    """ Log information about the given XSS to mitmproxy
+        (XSSDict or None) -> None """
+    # If it is None, then there is no info to log
     if not xssInfo:
         return
     ctx.log.error("===== XSS Found ====")
@@ -71,23 +95,41 @@ def ctxLog(xssInfo):
     ctx.log.error("Line: %s" % xssInfo['Line'])
 
 def getXSSInfo(body, requestURL, injectionPoint):
+    """ Return a XSSDict if there is a XSS otherwise return None
+        String URL String -> (XSSDict or None) """
     # All of the injection tests work by checking whether the character (with
     # the fences on the side) appear in the body of the HTML
     def injectOA(match):
+        """ Whether or not you can inject <
+            Bytes -> Boolean """
         return b"ao<ac" in match
     def injectCA(match):
+        """ Whether or not you can inject >
+            Bytes -> Boolean """
         return b"ac>so" in match
     def injectSingleQuotes(match):
+        """ Whether or not you can inject '
+            Bytes -> Boolean """
         return b"s'd" in match
     def injectDoubleQuotes(match):
+        """ Whether or not you can inject "
+            Bytes -> Boolean """
         return b'd"ao' in match
     def injectSlash(match):
+        """ Whether or not you can inject /
+            Bytes -> Boolean """
         return b"sl/bsl" in match
     def injectSemi(match):
+        """ Whether or not you can inject ;
+            Bytes -> Boolean """
         return b"se;sl" in match
-    # BFS based search
-    # A list of paths to a given str in the HTML tree
+    # A Path is a String containing HTML nodes separated by forward slashes
+    # A HTMLTree is a lxml tree returned by fromstring()
+    # A TreePathTuple is a (HTMLTree, Path)
     def pathsToText(listOfTreePathTuples, str, found=[]):
+        """ Return list of Paths to a given str in the given HTML tree
+              - Note that it does a BFS
+            TreePathTuple String -> [ListOf Path] """
         newLOTPT = []
         if not listOfTreePathTuples:
             return found
@@ -100,21 +142,33 @@ def getXSSInfo(body, requestURL, injectionPoint):
                 newLOTPT.extend([(child, path+"/"+tree.tag) for child in tree.getchildren()])
         return pathsToText(newLOTPT, str, found)
     def inScript(text, index, body):
+        """ Whether the Numberth occurence of the first string in the second
+            string is inside a script tag
+            String Number String -> Boolean """
         paths = pathsToText([(fromstring(body), "")], text.decode("utf-8"), found=[])
         try:
             path = paths[index]
             return "script" in path
         except IndexError:
             return False
-    def inHTML(text, index, body): 
-        text = text.split(b"<")[0]  # if there is a < then lxml will interpret that as a tag, so only search for the stuff before it
+    def inHTML(text, index, body):
+        """ Whether the Numberth occurence of the first string in the second
+            string is inside the HTML but not inside a script tag or part of
+            a HTML attribute
+            String Number String -> Boolean """
+        # if there is a < then lxml will interpret that as a tag, so only search for the stuff before it
+        text = text.split(b"<")[0]
         paths = pathsToText([(fromstring(body), "")], text.decode("utf-8"), found=[])
         try:
             path = paths[index]
             return "script" not in path
         except IndexError:
             return False
+    # A QuoteChar is either ' or "
     def insideQuote(qc, text, textIndex, body):
+        """ Whether the Numberth occurence of the first string in the second
+            string is inside quotes as defined by the supplied QuoteChar
+            QuoteChar String Number String -> Boolean """
         text = text.decode('utf-8')
         body = body.decode('utf-8')
         inQuote = False
@@ -189,7 +243,8 @@ def getXSSInfo(body, requestURL, injectionPoint):
         # TODO: Injection of JS executing attributes (e.g. onmouseover)
         else:
             return None
-    
+
+# response is mitmproxy's entry point
 def response(flow):
     findUnclaimedURLs(flow.response.content, flow.request.url)  # Example: http://xss.guru/unclaimedScriptTag.html
     testEndOfURLInjection(flow.request.url)
